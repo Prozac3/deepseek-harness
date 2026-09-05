@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import WebSocket, { type RawData } from 'ws'
 import { Context, Service, symbols } from '@deepseek-ai/cordis'
 import { apply as applyConnection, inject as connectionInject } from '@deepseek-ai/dsh-client-connection'
+import type { ConnectionConfig } from '@deepseek-ai/dsh-client-connection'
 import WebServer from '@deepseek-ai/dsh-host-webserver'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
 import {
@@ -990,11 +991,22 @@ describe('Typert Remote streams', () => {
     rejected.resume()
     ;(request as { abort(): void }).abort()
   })
+
+  it('accepts a loopback reverse-proxy assertion before opening a stream', async () => {
+    const { ctx } = await setup(true, {}, { trustProxyAuth: true })
+    const socket = new WebSocket(`ws://127.0.0.1:${String(ctx.webServer.port)}/api/remote.mux`, {
+      headers: { 'x-dsh-proxy-auth': '1' },
+    })
+    await once(socket, 'open')
+    socket.close()
+    await once(socket, 'close')
+  })
 })
 
 async function setup(
   transport: boolean,
   gatewayConfig: GatewayConfig = {},
+  connectionConfig: ConnectionConfig = {},
 ): Promise<{ readonly ctx: Context; readonly service: FeedService }> {
   const ctx = new Context()
   roots.push(ctx)
@@ -1005,7 +1017,10 @@ async function setup(
   await ctx.plugin(TypertRegistry)
   await ctx.plugin(TypertGatewayService, gatewayConfig)
   if (transport) {
-    await ctx.plugin({ inject: [...connectionInject], apply: applyConnection })
+    await ctx.plugin({
+      inject: [...connectionInject],
+      apply: ctx => applyConnection(ctx, connectionConfig),
+    })
   }
   await ctx.plugin(FeedService)
   ctx.typert.register({

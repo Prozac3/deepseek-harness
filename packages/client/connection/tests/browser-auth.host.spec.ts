@@ -55,20 +55,25 @@ function createAuth(
   store: RecordCredentials,
   maxAgeDays = 30,
   processOwner: object = {},
+  trustProxyAuth = false,
 ): Promise<BrowserAuth> {
-  return BrowserAuth.create(processOwner, credentials(store), maxAgeDays)
+  return BrowserAuth.create(processOwner, credentials(store), maxAgeDays, trustProxyAuth)
 }
 
 function request(url: string, authority = '127.0.0.1:3080', init?: {
   cookie?: string
   method?: string
+  proxyAuth?: string
+  remoteAddress?: string | undefined
 }): ConnectionIndexRequest {
   return {
     method: init?.method ?? 'GET',
     url,
+    remoteAddress: init?.remoteAddress,
     headers: {
       host: authority,
       ...init?.cookie === undefined ? {} : { cookie: init.cookie },
+      ...init?.proxyAuth === undefined ? {} : { 'x-dsh-proxy-auth': init.proxyAuth },
     },
   }
 }
@@ -165,6 +170,38 @@ describe('BrowserAuth', () => {
         ? undefined
         : 'dsh web authentication required; reopen the URL printed by dsh web.\n')
     }
+  })
+
+  it('accepts an enabled proxy assertion from a loopback peer for index and API checks', async () => {
+    const auth = await createAuth(new RecordCredentials(), 30, {}, true)
+    const proxyRequest = request('/', 'dsh.example.com', {
+      remoteAddress: '127.0.0.1',
+      proxyAuth: '1',
+    })
+    expect(auth.isAuthenticated(proxyRequest)).toBe(true)
+    const allowed = response()
+    expect(auth.authorizeIndex(proxyRequest, allowed.value)).toBe(true)
+    expect(allowed.state).toEqual({})
+  })
+
+  it('keeps proxy authentication disabled by default and rejects non-loopback peers', async () => {
+    const disabled = await createAuth(new RecordCredentials())
+    expect(disabled.isAuthenticated(request('/', 'dsh.example.com', {
+      remoteAddress: '127.0.0.1',
+      proxyAuth: '1',
+    }))).toBe(false)
+
+    const enabled = await createAuth(new RecordCredentials(), 30, {}, true)
+    for (const remoteAddress of ['192.0.2.10', undefined]) {
+      expect(enabled.isAuthenticated(request('/', 'dsh.example.com', {
+        remoteAddress,
+        proxyAuth: '1',
+      }))).toBe(false)
+    }
+    expect(enabled.isAuthenticated(request('/', 'dsh.example.com', {
+      remoteAddress: '127.0.0.1',
+      proxyAuth: 'wrong',
+    }))).toBe(false)
   })
 
   it('rejects tampering, expiry, future issuance, and a longer lifetime than configured', async () => {

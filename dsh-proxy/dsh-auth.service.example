@@ -1,0 +1,16 @@
+[Unit]
+Description=DeepSeek Harness proxy login service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=dsh
+WorkingDirectory=/opt/deepseek-harness
+EnvironmentFile=/opt/deepseek-harness/dsh-proxy/.env
+ExecStart=/usr/bin/node /opt/deepseek-harness/dsh-proxy/auth-server.mjs
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

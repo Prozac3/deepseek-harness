@@ -4,7 +4,7 @@ import z from '@deepseek-ai/schemastery'
 import type {} from '@deepseek-ai/dsh-attachment'
 import type {} from '@deepseek-ai/dsh-credentials'
 // Activates the webServer Context merge used below.
-import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
+import type { IndexInjection, WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import { API_PATH } from './api-path.ts'
 import { bridge, DEFAULT_MAX_REQUEST_BODY_BYTES } from './http-bridge.ts'
 import { assertTrustedAuthority } from './api-request-trust.ts'
@@ -77,6 +77,8 @@ export interface ConnectionConfig {
    * bind. An entry that is not a bare, canonical authority fails plugin load.
    */
   trustedHosts?: string[]
+  /** Accept loopback proxy authentication and enable Host settings in its browser page. Default: false. */
+  trustProxyAuth?: boolean
   /** Absolute browser-session lifetime in days. Default: 30. */
   cookieMaxAgeDays?: number
   /** Maximum buffered JSON body for every `/api` request. Default: 300 MiB. */
@@ -85,6 +87,7 @@ export interface ConnectionConfig {
 
 export const Config: z<ConnectionConfig> = z.object({
   trustedHosts: z.array(String).default([]),
+  trustProxyAuth: z.boolean().default(false),
   cookieMaxAgeDays: z.natural().min(1).default(30),
   maxRequestBodyBytes: z.natural().min(1).default(DEFAULT_MAX_REQUEST_BODY_BYTES),
 })
@@ -99,6 +102,7 @@ export const Config: z<ConnectionConfig> = z.object({
 export async function apply(ctx: Context, config?: ConnectionConfig): Promise<void> {
   // The Loader resolves schema defaults; hand-built test contexts may pass none.
   const trustedHosts = config?.trustedHosts ?? []
+  const trustProxyAuth = config?.trustProxyAuth ?? false
   const cookieMaxAgeDays = config?.cookieMaxAgeDays ?? 30
   const maxRequestBodyBytes = config?.maxRequestBodyBytes ?? DEFAULT_MAX_REQUEST_BODY_BYTES
   // Config boundary: a malformed entry fails the load loudly here rather than
@@ -108,14 +112,22 @@ export async function apply(ctx: Context, config?: ConnectionConfig): Promise<vo
   const connection = new HostConnectionService(
     ctx,
     trustedHosts,
-    await BrowserAuth.create(ctx.root, ctx.credentials, cookieMaxAgeDays),
+    await BrowserAuth.create(ctx.root, ctx.credentials, cookieMaxAgeDays, trustProxyAuth),
   )
+  if (trustProxyAuth) {
+    ctx.effect(() => ctx.on('webserver/index-inject', (table: IndexInjection[]) => {
+      table.push({ kind: 'global', name: '__DSH_HOST_SETTINGS__', value: true })
+    }), 'client-connection: trusted proxy browser access')
+  }
   const fetchHandler = connection.createSharedFetchHandler(API_PATH)
   const route: WebRoute = {
     kind: 'prefix',
     path: API_PATH,
     handler: async (req, res) => {
-      const rejection = connection.requestRejection(req)
+      const rejection = connection.requestRejection({
+        headers: req.headers,
+        remoteAddress: req.socket.remoteAddress,
+      })
       if (rejection !== undefined) {
         res.writeHead(rejection)
         res.end(rejection === 401 ? 'unauthorized' : 'forbidden')

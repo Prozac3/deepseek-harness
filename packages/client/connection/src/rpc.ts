@@ -79,6 +79,8 @@ export type RpcMessage = ClientRequest | ServerResponse
 export interface ConnectionTrustRequest {
   /** Request headers supplied by either the Fetch or node:http representation. */
   readonly headers: Headers | Readonly<Record<string, string | readonly string[] | undefined>>
+  /** Socket peer address; proxy authentication accepts only a loopback peer. */
+  readonly remoteAddress?: string | undefined
 }
 
 /** HTTP status returned before dispatch, or undefined when the request may proceed. */

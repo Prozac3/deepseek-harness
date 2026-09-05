@@ -1,17 +1,26 @@
 import { Context } from '@deepseek-ai/cordis'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TestRemote } from '@deepseek-ai/dsh-client-test-runtime'
 import { apply, inject } from '../src/client/index.ts'
 import { SettingsSchemaService } from '../src/client/schema.ts'
 import { SettingsScopeBinder } from '../src/client/settings-scope.ts'
 import { apply as hostApply } from '../src/index.ts'
 
-function bench() {
+interface SettingsTestGlobal {
+  __DSH_HOST_SETTINGS__?: boolean
+}
+
+afterEach(() => {
+  delete (globalThis as SettingsTestGlobal).__DSH_HOST_SETTINGS__
+})
+
+function bench(isLoopback = true) {
   const describeCall = vi.fn().mockResolvedValue({
     ok: true, value: { writable: true, hasDocument: true, namespaces: [] },
   })
   const ctx = new Context()
   const remote = new TestRemote(ctx, { settings: { describe: describeCall } })
+  remote.$host = { home: undefined, isLoopback }
   return { ctx, describeCall, remote, fiber: ctx.plugin({ inject: [...inject], apply }) }
 }
 
@@ -25,6 +34,13 @@ describe('settings domain base plugin', () => {
     await fiber.await()
     expect(ctx.get('settingsScope')).toBeInstanceOf(SettingsScopeBinder)
     expect(ctx.get('settingsSchema')).toBeInstanceOf(SettingsSchemaService)
+    await vi.waitFor(() => { expect(describeCall).toHaveBeenCalledTimes(1) })
+  })
+
+  it('enables Host settings for an authenticated reverse-proxy page', async () => {
+    ;(globalThis as SettingsTestGlobal).__DSH_HOST_SETTINGS__ = true
+    const { describeCall, fiber } = bench(false)
+    await fiber.await()
     await vi.waitFor(() => { expect(describeCall).toHaveBeenCalledTimes(1) })
   })
 

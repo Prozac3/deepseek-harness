@@ -35,23 +35,42 @@ function fakeHttpServer(
 }
 
 /** Bodyless GET carrying the given headers (enough for the trust fence + bridge). */
-function fakeRequest(headers: Record<string, string>, url = `${API_PATH}/session.list`): IncomingMessage {
+function fakeRequest(
+  headers: Record<string, string>,
+  url = `${API_PATH}/session.list`,
+  remoteAddress = '127.0.0.1',
+): IncomingMessage {
   const request = Readable.from([]) as unknown as IncomingMessage
-  Object.assign(request, { url, method: 'GET', headers })
+  Object.assign(request, { url, method: 'GET', headers, socket: { remoteAddress } })
   return request
 }
 
 /** JSON POST carrying a complete client-request envelope. */
-function fakePost(headers: Record<string, string>, url: string, body: unknown): IncomingMessage {
+function fakePost(
+  headers: Record<string, string>,
+  url: string,
+  body: unknown,
+  remoteAddress = '127.0.0.1',
+): IncomingMessage {
   const request = Readable.from([Buffer.from(JSON.stringify(body))]) as unknown as IncomingMessage
-  Object.assign(request, { url, method: 'POST', headers: { 'content-type': 'application/json', ...headers } })
+  Object.assign(request, {
+    url,
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...headers },
+    socket: { remoteAddress },
+  })
   return request
 }
 
 /** Raw POST for malformed-body and media-type boundary cases. */
-function fakeRawPost(headers: Record<string, string>, url: string, body: string): IncomingMessage {
+function fakeRawPost(
+  headers: Record<string, string>,
+  url: string,
+  body: string,
+  remoteAddress = '127.0.0.1',
+): IncomingMessage {
   const request = Readable.from([Buffer.from(body)]) as unknown as IncomingMessage
-  Object.assign(request, { url, method: 'POST', headers })
+  Object.assign(request, { url, method: 'POST', headers, socket: { remoteAddress } })
   return request
 }
 
@@ -81,7 +100,8 @@ function fakeResponse(): {
   return { response, state }
 }
 
-async function mounted(config?: { trustedHosts?: string[] }): Promise<{
+async function mounted(config?: { trustedHosts?: string[]; trustProxyAuth?: boolean }): Promise<{
+  ctx: Context
   routes: WebRoute[]
   upgrades: WebUpgradeRoute[]
   connection: HostConnectionHandle
@@ -95,6 +115,7 @@ async function mounted(config?: { trustedHosts?: string[] }): Promise<{
   const fiber = ctx.plugin({ inject: [...inject], apply }, config)
   await fiber.await()
   return {
+    ctx,
     routes,
     upgrades,
     connection: ctx.get('connection') as HostConnectionHandle,
@@ -153,6 +174,22 @@ describe('connection node half', () => {
     await dispose()
     expect(routes).toHaveLength(0)
     expect(upgrades).toHaveLength(0)
+  })
+
+  it('marks the served browser privileged only in trusted proxy mode', async () => {
+    const direct = await mounted()
+    const directRows: import('@deepseek-ai/dsh-host-webserver').IndexInjection[] = []
+    direct.ctx.emit('webserver/index-inject', directRows)
+    expect(directRows).toEqual([])
+    await direct.dispose()
+
+    const proxy = await mounted({ trustProxyAuth: true })
+    const proxyRows: import('@deepseek-ai/dsh-host-webserver').IndexInjection[] = []
+    proxy.ctx.emit('webserver/index-inject', proxyRows)
+    expect(proxyRows).toEqual([
+      { kind: 'global', name: '__DSH_HOST_SETTINGS__', value: true },
+    ])
+    await proxy.dispose()
   })
 
   it('refuses an untrusted Host on any /api path before the bridge runs', async () => {
@@ -221,6 +258,29 @@ describe('connection node half', () => {
       cookie: browserCookie(connection, 'harness.example:3080'),
     }), declared.response)
     expect(declared.state.status).toBe(404)
+    await dispose()
+  })
+
+  it('accepts the proxy assertion only from a loopback reverse-proxy hop', async () => {
+    const { routes, dispose } = await mounted({
+      trustedHosts: ['harness.example'],
+      trustProxyAuth: true,
+    })
+    const allowed = fakeResponse()
+    await routes[0]!.handler(fakeRequest({
+      host: 'harness.example',
+      origin: 'http://harness.example',
+      'sec-fetch-site': 'same-origin',
+      'x-dsh-proxy-auth': '1',
+    }), allowed.response)
+    expect(allowed.state.status).toBe(404)
+
+    const remote = fakeResponse()
+    await routes[0]!.handler(fakeRequest({
+      host: 'harness.example',
+      'x-dsh-proxy-auth': '1',
+    }, `${API_PATH}/session.list`, '192.0.2.10'), remote.response)
+    expect(remote.state).toMatchObject({ status: 401, body: 'unauthorized' })
     await dispose()
   })
 

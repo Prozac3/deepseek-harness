@@ -1,6 +1,7 @@
 /** Host registry and HTTP adapter for generic Connection RPC channels. */
 
 import { Context, Service } from '@deepseek-ai/cordis'
+import type { IncomingMessage } from 'node:http'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import {
   RpcId,
@@ -160,7 +161,7 @@ export class HostConnectionService extends Service implements HostConnectionHand
       kind: 'prefix',
       path: channel,
       handler: async (req, res) => {
-        const rejection = this.requestRejection(req)
+        const rejection = this.requestRejection(this.requestFacts(req))
         if (rejection !== undefined) {
           res.writeHead(rejection)
           res.end(rejection === 401 ? 'unauthorized' : 'forbidden')
@@ -197,6 +198,11 @@ export class HostConnectionService extends Service implements HostConnectionHand
         this.interceptors.delete(channel)
       }
     }, `client-connection: ${channel} rpc interceptor`)
+  }
+
+  /** Preserve the node socket peer needed by loopback-only proxy authentication. */
+  private requestFacts(req: IncomingMessage): ConnectionTrustRequest {
+    return { headers: req.headers, remoteAddress: req.socket.remoteAddress }
   }
 }
 

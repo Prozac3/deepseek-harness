@@ -16,6 +16,8 @@ const TOKEN_QUERY = 'token'
 const COOKIE_PREFIX = 'dsh-auth-'
 const COOKIE_PAYLOAD_VERSION = 1
 const STORED_SECRET_VERSION = 1
+const PROXY_AUTH_HEADER = 'x-dsh-proxy-auth'
+const PROXY_AUTH_VALUE = '1'
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]*$/
 const PROCESS_LAUNCH_TOKENS = new WeakMap<object, string>()
 
@@ -64,6 +66,13 @@ function header(
   if (headers instanceof Headers) return headers.get(name) ?? undefined
   const value = headers[name]
   return typeof value === 'string' ? value : undefined
+}
+
+/** Whether a request arrived from the local reverse proxy hop. */
+function isLoopbackPeer(remoteAddress: string | undefined): boolean {
+  return remoteAddress === '127.0.0.1'
+    || remoteAddress === '::1'
+    || remoteAddress === '::ffff:127.0.0.1'
 }
 
 /** Canonical request authority used as the cookie name and signed audience. */
@@ -190,6 +199,7 @@ export class BrowserAuth {
     processOwner: object,
     private readonly secret: Buffer,
     maxAgeDays: number,
+    private readonly trustProxyAuth: boolean,
   ) {
     this.launchToken = processLaunchToken(processOwner)
     this.maxAgeMilliseconds = maxAgeDays * DAY_MILLISECONDS
@@ -205,14 +215,16 @@ export class BrowserAuth {
    * @param processOwner - root application context retaining one token across Connection reloads.
    * @param credentials - persistent credential provider for the Web profile.
    * @param maxAgeDays - positive absolute browser-cookie lifetime in days.
+   * @param trustProxyAuth - accept the fixed assertion from a loopback reverse proxy.
    * @returns initialized authentication owner with the process owner's launch token.
    */
   static async create(
     processOwner: object,
     credentials: CredentialProvider,
     maxAgeDays: number,
+    trustProxyAuth = false,
   ): Promise<BrowserAuth> {
-    return new BrowserAuth(processOwner, await initializeSecret(credentials), maxAgeDays)
+    return new BrowserAuth(processOwner, await initializeSecret(credentials), maxAgeDays, trustProxyAuth)
   }
 
   /**
@@ -287,6 +299,7 @@ export class BrowserAuth {
    * @returns true only for an unexpired cookie signed by this activation's loaded secret.
    */
   isAuthenticated(request: ConnectionTrustRequest): boolean {
+    if (this.isProxyAuthenticated(request)) return true
     const authority = requestAuthority(request.headers)
     const rawCookie = header(request.headers, 'cookie')
     if (authority === undefined || rawCookie === undefined) return false
@@ -299,6 +312,13 @@ export class BrowserAuth {
       && payload.expiresAt > now
       && payload.expiresAt > payload.issuedAt
       && payload.expiresAt - payload.issuedAt <= this.maxAgeMilliseconds
+  }
+
+  /** Accept Nginx's overwritten assertion only from the loopback hop. */
+  private isProxyAuthenticated(request: ConnectionTrustRequest): boolean {
+    return this.trustProxyAuth
+      && isLoopbackPeer(request.remoteAddress)
+      && header(request.headers, PROXY_AUTH_HEADER) === PROXY_AUTH_VALUE
   }
 
   private writeUnauthorized(req: ConnectionIndexRequest, res: ConnectionIndexResponse): void {

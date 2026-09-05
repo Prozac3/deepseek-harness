@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Run `dsh --profile web` and the interface opens in your default browser, ready for interactive chat with the agent. You get the conversation view, model and settings management, and session history, backed by the same model access, tools, and safety defaults as every other surface. The command prints a tokenized startup URL; the browser exchanges that token for a signed session cookie and redirects to the clean root URL. You can change the port, suppress the browser handoff, and allow extra hosts from the command line; binding all network interfaces is intentionally not supported. Choose it for interactive work in the browser; `dsh-headless` is the one-shot command-line sibling.
+Run `dsh --profile web` and the interface opens in your default browser, ready for interactive chat with the agent. You get the conversation view, model and settings management, and session history, backed by the same model access, tools, and safety defaults as every other surface. The command normally prints a tokenized startup URL; the browser exchanges that token for a signed session cookie and redirects to the clean root URL. With `--trust-proxy-auth`, a loopback reverse proxy supplies authentication instead and the token stays internal. You can change the port, suppress the browser handoff, and allow extra hosts from the command line; binding all network interfaces is intentionally not supported. Choose it for interactive work in the browser; `dsh-headless` is the one-shot command-line sibling.
 
 ## Table of Contents
 
@@ -34,11 +34,11 @@ dsh --profile web
 dsh --profile web --no-open --port 8080
 ```
 
-After startup you see a `dsh web:` line whose root URL carries a fresh process token. Unless `--no-open` or an SSH session suppresses it, the default browser opens that URL, receives a signed cookie, and redirects to the clean root page. You know it worked when the page loads and you can chat with the agent. Two failures to expect: if the frontend is not built, startup stops with a build hint (`pnpm run build` in a checkout); if the browser cannot be opened, a credential-free diagnostic prints to stderr while the server keeps running — open the printed startup URL yourself.
+After startup you normally see a `dsh web:` line whose root URL carries a fresh process token. Unless `--no-open`, `--trust-proxy-auth`, or an SSH session suppresses it, the default browser opens that URL, receives a signed cookie, and redirects to the clean root page. In reverse-proxy mode, log in at the proxy's username/password page; no dsh token entry is needed. You know it worked when the page loads and you can chat with the agent. Two failures to expect: if the frontend is not built, startup stops with a build hint (`pnpm run build` in a checkout); if the browser cannot be opened, a credential-free diagnostic prints to stderr while the server keeps running — open the printed startup URL yourself.
 
 ### Configuration
 
-Most users never set these; the command-line flags feed the four settings below — `--host`, `--port`, and `--trusted-host` come from the invocation, and `--no-open` turns the browser handoff off for that invocation:
+Most users never set these; the command-line flags feed the five settings below — `--host`, `--port`, `--trusted-host`, and `--trust-proxy-auth` come from the invocation, and `--no-open` turns the browser handoff off for that invocation:
 
 | Field | Default | Meaning |
 |---|---|---|
@@ -46,12 +46,24 @@ Most users never set these; the command-line flags feed the four settings below 
 | `printUrl` | `true` | Print the `dsh web:` URL line at startup |
 | `surfaceContext` | `true` | Give the agent GUI-orientation context and expose `DSH_WEB_URL` to its shell commands |
 | `trustedHosts` | `[]` | Extra hosts allowed to reach the GUI from the network |
+| `trustProxyAuth` | `false` | Accept the fixed authentication assertion from a loopback reverse proxy |
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-web-app) is the exhaustive source for every accepted field and its JSDoc.
 
 ### LAN access and trusted hosts
 
-By default the GUI accepts connections from this machine only. A deployment that binds all network interfaces also allows browsers from the LAN, and the printed URL then includes a LAN address; `--trusted-host` adds extra hosts in either case. Host and Origin checks control reachability, while the token exchange authenticates every Host API method and WebSocket stream. The LAN addresses are sampled once at startup, so a network change later is not picked up — restart the GUI to re-advertise.
+By default the GUI accepts connections from this machine only. A deployment that binds all network interfaces also allows browsers from the LAN, and the printed URL then includes a LAN address; `--trusted-host` adds extra hosts in either case. Host and Origin checks control reachability, while the token exchange authenticates every Host API method and WebSocket stream. In `trustProxyAuth` mode, the configured loopback reverse proxy's successful login supplies that authentication decision. The LAN addresses are sampled once at startup, so a network change later is not picked up — restart the GUI to re-advertise.
+
+### Loopback reverse-proxy authentication
+
+Run the dsh Web backend on loopback and expose only the authenticated proxy listener:
+
+```sh
+dsh web --no-open --host 127.0.0.1 --port 3081 \
+  --trusted-host dsh.example.com --trust-proxy-auth
+```
+
+The proxy must overwrite `X-DSH-Proxy-Auth: 1` after its own authentication succeeds and forward API, index, streaming, and WebSocket requests over loopback. This mode enables Host settings for the served page, including model providers, plugin configuration, and presets; controls that require a loopback browser remain unavailable. Keep ports `3081` and the auth service private. Use HTTPS on the public listener for any access outside localhost; the repository's `dsh-proxy/` directory contains an example Cookie-authenticated Nginx deployment.
 
 ### Running over SSH
 
@@ -88,7 +100,7 @@ The URL line and browser handoff are readiness signals: supervisors RPC as soon 
 | File | Role |
 |---|---|
 | [`src/index.ts`](src/index.ts) | The `web-app` glue plugin: dist resolution, LAN trust sampling, prompt sections, bash variable, URL line, browser handoff |
-| [`src/startup.ts`](src/startup.ts) | The `web-startup` provider: `--host`, `--port`, `--trusted-host`, `--no-open`, `--help` |
+| [`src/startup.ts`](src/startup.ts) | The `web-startup` provider: `--host`, `--port`, `--trusted-host`, `--trust-proxy-auth`, `--no-open`, `--help` |
 | [`cordis.patch.yml`](cordis.patch.yml) | The web patch: restated base values, web host rows, browser roster, agent plane behind presets |
 | — | No runtime invariant companion is published; every contribution (frontend-static child plugin, prompt section, bashEnv registration) is registry-disposed with the fiber, and each owning registry's package carries that relation's invariant; the package holds no mutable state of its own to audit. |
 | [`tests/web-app.spec.ts`](tests/web-app.spec.ts) | Dist resolution, fallback seat, prompt sections, readiness |

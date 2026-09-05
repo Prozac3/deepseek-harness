@@ -1,0 +1,16 @@
+[Unit]
+Description=DeepSeek Harness Web UI
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=dsh
+WorkingDirectory=/opt/deepseek-harness
+Environment=DSH_HOME=/var/lib/dsh-proxy
+ExecStart=/usr/local/bin/dsh web --no-open --host 127.0.0.1 --port 3081 --trusted-host dsh.example.com --trust-proxy-auth
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -42,6 +42,11 @@ export type {
  */
 export const inject = ['remote', 'remote.settings']
 
+interface SettingsPageGlobal {
+  /** Host-injected permission for an authenticated reverse-proxy deployment. */
+  __DSH_HOST_SETTINGS__?: boolean
+}
+
 /**
  * Provide the settings-namespace scope service over one shared describe
  * mirror, and keep that mirror fresh on the two signals that can move the
@@ -55,7 +60,8 @@ export function apply(ctx: Context): void {
   const schema = new SettingsSchemaService(ctx)
   // Resolved once here, where `remote` is declared in this plugin's own
   // `inject`; the binder hands the same answer to every scope it binds.
-  const persistence = ctx.remote.$host.isLoopback ? 'host' : 'memory'
+  const proxyHostSettings = (globalThis as SettingsPageGlobal).__DSH_HOST_SETTINGS__ === true
+  const persistence = ctx.remote.$host.isLoopback || proxyHostSettings ? 'host' : 'memory'
   const mirror = new SettingsDescribeMirror(ctx, persistence)
   ctx.effect(() => {
     const disposers = [

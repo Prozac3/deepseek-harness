@@ -9,7 +9,7 @@ kind: "package-bundle"
 
 ## 概述
 
-运行 `dsh --profile web`，界面会在你的默认浏览器中打开，即可与 agent（智能体）交互式聊天。你会获得会话视图、模型与设置管理以及会话历史，背后与其他表层相同的模型访问、工具与安全默认值。该命令会打印带 token 的启动 URL；浏览器用该 token 换取签名会话 cookie，再重定向到干净的根 URL。你可以从命令行更改端口、关闭浏览器交接并允许额外主机；有意不支持绑定所有网络接口。需要浏览器中的交互式工作时选择它；`dsh-headless` 是一次性的命令行兄弟表层。
+运行 `dsh --profile web`，界面会在你的默认浏览器中打开，即可与 agent（智能体）交互式聊天。你会获得会话视图、模型与设置管理以及会话历史，背后与其他表层相同的模型访问、工具与安全默认值。该命令通常会打印带 token 的启动 URL；浏览器用该 token 换取签名会话 cookie，再重定向到干净的根 URL。使用 `--trust-proxy-auth` 时，由 loopback reverse proxy 提供认证，token 留在内部。你可以从命令行更改端口、关闭浏览器交接并允许额外主机；有意不支持绑定所有网络接口。需要浏览器中的交互式工作时选择它；`dsh-headless` 是一次性的命令行兄弟表层。
 
 ## 目录
 
@@ -34,11 +34,11 @@ dsh --profile web
 dsh --profile web --no-open --port 8080
 ```
 
-启动后你会看到 `dsh web:` 行，其根 URL 携带新的进程 token。除非 `--no-open` 或 SSH 会话抑制，否则默认浏览器会打开该 URL、取得签名 cookie，再重定向到干净的根页面。页面加载且你可以与 agent（智能体）对话，就说明成功了。两种可预期的失败：前端未构建时，启动会以构建提示停止（checkout 中运行 `pnpm run build`）；浏览器无法打开时，stderr 会打印不含凭据的诊断，但服务器会继续运行——请自行打开已打印的启动 URL。
+启动后通常会看到 `dsh web:` 行，其根 URL 携带新的进程 token。除非 `--no-open`、`--trust-proxy-auth` 或 SSH 会话抑制，否则默认浏览器会打开该 URL、取得签名 cookie，再重定向到干净的根页面。在 reverse proxy 模式下，在代理的用户名/密码页面登录即可，不需要输入 dsh token。页面加载且你可以与 agent（智能体）对话，就说明成功了。两种可预期的失败：前端未构建时，启动会以构建提示停止（checkout 中运行 `pnpm run build`）；浏览器无法打开时，stderr 会打印不含凭据的诊断，但服务器会继续运行——请自行打开已打印的启动 URL。
 
 ### 配置
 
-大多数用户不需要设置这些；命令行 flag 会提供给下面四个设置——`--host`、`--port` 与 `--trusted-host` 来自本次调用，`--no-open` 仅对本次调用关闭浏览器交接：
+大多数用户不需要设置这些；命令行 flag 会提供给下面五个设置——`--host`、`--port`、`--trusted-host` 与 `--trust-proxy-auth` 来自本次调用，`--no-open` 仅对本次调用关闭浏览器交接：
 
 | 字段 | 默认值 | 含义 |
 |---|---|---|
@@ -46,12 +46,24 @@ dsh --profile web --no-open --port 8080
 | `printUrl` | `true` | 启动时打印 `dsh web:` URL 行 |
 | `surfaceContext` | `true` | 给 agent（智能体）提供 GUI 定位上下文，并把 `DSH_WEB_URL` 暴露给其 shell 命令 |
 | `trustedHosts` | `[]` | 允许从网络访问 GUI 的额外主机 |
+| `trustProxyAuth` | `false` | 接受来自 loopback reverse proxy 的固定认证声明 |
 
 生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-web-app)是每个受支持字段及其 JSDoc 的穷尽式真源。
 
 ### LAN 访问与可信主机
 
-默认情况下 GUI 只接受本机的连接。绑定所有网络接口的部署也会允许 LAN 内的浏览器访问，此时打印的 URL 会附带一个 LAN 地址；`--trusted-host` 在两种情况下都能添加额外主机。Host 与 Origin 检查控制可达性，token 交换则认证每个 Host API 方法与 WebSocket stream。LAN 地址只在启动时采样一次，因此之后的网络变化不会被感知——重启 GUI 以重新公告。
+默认情况下 GUI 只接受本机的连接。绑定所有网络接口的部署也会允许 LAN 内的浏览器访问，此时打印的 URL 会附带一个 LAN 地址；`--trusted-host` 在两种情况下都能添加额外主机。Host 与 Origin 检查控制可达性，token 交换则认证每个 Host API 方法与 WebSocket stream。在 `trustProxyAuth` 模式下，配置的 loopback reverse proxy 的成功登录提供该认证判断。LAN 地址只在启动时采样一次，因此之后的网络变化不会被感知——重启 GUI 以重新公告。
+
+### 通过 loopback reverse proxy 认证
+
+让 dsh Web 后端监听 loopback，并且只暴露经过认证的代理监听器：
+
+```sh
+dsh web --no-open --host 127.0.0.1 --port 3081 \
+  --trusted-host dsh.example.com --trust-proxy-auth
+```
+
+代理必须在自身认证成功后覆盖 `X-DSH-Proxy-Auth: 1`，并通过 loopback 转发 API、index、streaming 与 WebSocket 请求。此模式会为提供的页面启用 Host 设置，包括模型提供方、插件配置与预设；要求 loopback 浏览器的控件仍然不可用。保持 `3081` 和认证服务端口为私有。任何 localhost 之外的访问都必须在公共监听器上使用 HTTPS；仓库的 `dsh-proxy/` 目录包含 Cookie 认证 Nginx 部署示例。
 
 ### 通过 SSH 运行
 
@@ -88,7 +100,7 @@ URL 行与浏览器交接都是就绪信号：监督方一观察到该行就发�
 | 文件 | 职责 |
 |---|---|
 | [`src/index.ts`](src/index.ts) | `web-app` 粘合插件：dist 解析、LAN 信任采样、提示词段落、bash 变量、URL 行、浏览器交接 |
-| [`src/startup.ts`](src/startup.ts) | `web-startup` 提供方：`--host`、`--port`、`--trusted-host`、`--no-open`、`--help` |
+| [`src/startup.ts`](src/startup.ts) | `web-startup` 提供方：`--host`、`--port`、`--trusted-host`、`--trust-proxy-auth`、`--no-open`、`--help` |
 | [`cordis.patch.yml`](cordis.patch.yml) | Web patch：重述的基础值、Web 宿主行、浏览器名录、preset 之后的 agent 层 |
 | — | 不发布运行时不变式伴生入口；本包只持有静态 contribution 列表，每项 contribution 都由其 registry 释放。 |
 | [`tests/web-app.spec.ts`](tests/web-app.spec.ts) | dist 解析、fallback 席位、提示词段落、就绪宣告 |

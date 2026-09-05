@@ -335,6 +335,8 @@ export interface ConnectionConfig {
    * bind. An entry that is not a bare, canonical authority fails plugin load.
    */
   trustedHosts?: string[]
+  /** Accept loopback proxy authentication and enable Host settings in its browser page. Default: false. */
+  trustProxyAuth?: boolean
   /** Absolute browser-session lifetime in days. Default: 30. */
   cookieMaxAgeDays?: number
   /** Maximum buffered JSON body for every `/api` request. Default: 300 MiB. */
@@ -342,7 +344,7 @@ export interface ConnectionConfig {
 }
 ```
 
-来源：[`packages/client/connection/src/index.ts:55`](../packages/client/connection/src/index.ts)
+来源：[`packages/client/connection/src/index.ts:70`](../packages/client/connection/src/index.ts)
 
 <a id="deepseek-aidsh-client-hmr"></a>
 
@@ -3173,6 +3175,8 @@ export interface Config {
   surfaceContext: boolean
   /** Explicit `--trusted-host` authorities from this invocation. */
   trustedHosts: string[]
+  /** Allow a loopback reverse proxy to satisfy Web authentication. */
+  trustProxyAuth: boolean
 }
 ```
 

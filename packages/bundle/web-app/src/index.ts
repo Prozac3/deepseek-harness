@@ -55,6 +55,8 @@ export interface Config {
   surfaceContext: boolean
   /** Explicit `--trusted-host` authorities from this invocation. */
   trustedHosts: string[]
+  /** Allow a loopback reverse proxy to satisfy Web authentication. */
+  trustProxyAuth: boolean
 }
 
 export const Config: z<Config> = z.object({
@@ -62,6 +64,7 @@ export const Config: z<Config> = z.object({
   printUrl: z.boolean().default(true),
   surfaceContext: z.boolean().default(true),
   trustedHosts: z.array(String).default([]),
+  trustProxyAuth: z.boolean().default(false),
 })
 
 /** Bind-dependent Web values shared by the trust fence and URL display. */
@@ -70,6 +73,8 @@ export interface WebRuntimeValues {
   lanAddresses: string[]
   /** LAN literals followed by explicit invocation authorities. */
   trustedHosts: string[]
+  /** Whether the loopback reverse-proxy assertion is enabled for this runtime. */
+  trustProxyAuth: boolean
 }
 
 /** Environment variable naming the canonical local URL of this Web GUI. */
@@ -131,13 +136,17 @@ try {
  * @param extra - explicit `--trusted-host` values, in argument order.
  * @returns the LAN display addresses and invocation-derived fence authorities.
  */
-export function resolveLanTrust(bindHost: string, extra: readonly string[]): WebRuntimeValues {
+export function resolveLanTrust(
+  bindHost: string,
+  extra: readonly string[],
+  trustProxyAuth = false,
+): WebRuntimeValues {
   const lanAddresses = bindHost === ALL_INTERFACES_HOST
     ? Object.values(networkInterfaces()).flat()
       .filter((iface): iface is NonNullable<typeof iface> => iface !== undefined && iface.family === 'IPv4' && !iface.internal)
       .map(iface => iface.address)
     : []
-  return { lanAddresses, trustedHosts: [...lanAddresses, ...extra] }
+  return { lanAddresses, trustedHosts: [...lanAddresses, ...extra], trustProxyAuth }
 }
 
 /** Model-visible orientation and acceptance boundary for sessions created through `dsh web`. */
@@ -232,10 +241,11 @@ export const internals: {
  * @param config - validated {@link Config}.
  */
 export function apply(ctx: Context, config: Config): void {
-  const runtime = resolveLanTrust(ctx.webServer.host, config.trustedHosts)
+  const runtime = resolveLanTrust(ctx.webServer.host, config.trustedHosts, config.trustProxyAuth)
   // The loopback URL belongs to this host. Under SSH, the operator reaches it
   // through a local forwarding address that this process cannot derive.
-  const handoffBrowser = config.openBrowser && !launchedThroughSsh(ctx)
+  const handoffBrowser = config.openBrowser && !config.trustProxyAuth && !launchedThroughSsh(ctx)
+  const printUrl = config.printUrl && !config.trustProxyAuth
   // Release dependent rows only after bind-dependent trust has been sampled once.
   ctx.provide(WEB_RUNTIME_SERVICE, runtime)
   ctx.plugin(FrontendStatic, { distIndex: internals.resolveDistIndex() })
@@ -258,7 +268,7 @@ export function apply(ctx: Context, config: Config): void {
       })
     })
   }
-  if (config.printUrl || handoffBrowser) {
+  if (printUrl || handoffBrowser) {
     ctx.inject(['connection'], (connectionCtx) => {
       // The URL line and browser handoff are readiness signals: supervisors RPC
       // as soon as they observe the line, while a browser requests the page as
@@ -276,7 +286,7 @@ export function apply(ctx: Context, config: Config): void {
           ? undefined
           : connectionCtx.connection.authenticatedUrl(`http://${lanCandidate}:${String(port)}`)
         ANNOUNCED_ROOTS.add(connectionCtx.root)
-        if (config.printUrl) {
+        if (printUrl) {
           console.log(`dsh web: ${authenticatedUrl}${lanUrl === undefined ? '' : ` (LAN: ${lanUrl})`}`)
         }
         if (handoffBrowser) {
